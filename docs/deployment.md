@@ -73,6 +73,11 @@ Cloudflare's free plan cannot run the Python/FFmpeg worker, but a Tunnel exposes
 3. The quick-tunnel URL changes on every restart. For a stable URL, create a named tunnel in Cloudflare Zero Trust (needs a domain on Cloudflare) and use `command: tunnel run` with `TUNNEL_TOKEN`.
 The API is only reachable while the machine is on.
 
+## Web app on the VM too (`https://spm.cuelatch.com`)
+`docker compose --profile tunnel up -d --build` also builds `web/Dockerfile` (Next.js, `next start`) as the `web` service on host port `WEB_PORT` (3010 on the VM).
+The named Cloudflare tunnel routes `spm.cuelatch.com` to `http://web:3000` and `spm-api.cuelatch.com` to `http://api:8000` (ingress is managed in Cloudflare Zero Trust).
+The API's `WEB_ORIGIN` lists both web origins, comma-separated (Netlify and the VM), and Supabase Auth's Site URL / redirect URLs include both. Netlify stays as a spare copy.
+
 ## Current deployment (Oracle Always Free VM)
 API + worker + a named Cloudflare Tunnel (`https://spm-api.cuelatch.com`, token in the VM's `~/site-progress-monitor/.env` as `TUNNEL_TOKEN`) run from `~/site-progress-monitor` on the Oracle ARM VM (`API_PORT=8010`, since 8000 is used there):
 `DOCKER_CONFIG=$HOME/.dockercfg docker compose --profile tunnel up -d`. The VM is IPv4-only, so `DATABASE_URL` uses the Supabase **session pooler**

@@ -9,7 +9,8 @@ app = FastAPI(title="Construction Progress Monitor API", version="0.1.0")
 errors.install(app)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[get_settings().web_origin],  # restricted: never "*"
+    # restricted: never "*"; WEB_ORIGIN may list several comma-separated origins
+    allow_origins=[o.strip() for o in get_settings().web_origin.split(",") if o.strip()],
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
