@@ -171,3 +171,19 @@ describe("NextStep", () => {
     expect(screen.getByText(/All caught up/)).toBeInTheDocument();
   });
 });
+
+import { Bullets, summaryLines } from "@/components/bullets";
+describe("Bullets", () => {
+  it("shows dash-prefixed lines as list items", () => {
+    render(<Bullets text={"- Crane erected\n- Walls up to level 1\n* Gravel pile removed"} />);
+    expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Crane erected", "Walls up to level 1", "Gravel pile removed"]);
+  });
+  it("keeps older plain-text summaries as a paragraph", () => {
+    render(<Bullets text="Foundation work progressed well." />);
+    expect(screen.queryByRole("listitem")).toBeNull();
+    expect(screen.getByText("Foundation work progressed well.")).toBeInTheDocument();
+  });
+  it("ignores blank lines", () => {
+    expect(summaryLines("- a\n\n- b\n").lines).toEqual(["a", "b"]);
+  });
+});

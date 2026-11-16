@@ -1,4 +1,5 @@
 "use client";
+import { Bullets } from "@/components/bullets";
 import Link from "next/link";
 import { use } from "react";
 import { HistoryChart } from "@/components/history-chart";
@@ -29,7 +30,7 @@ export default function ClientProject({ params }: { params: Promise<{ id: string
         <PackageProgressList items={d.work_packages} />
       </CardContent></Card>
       {d.latest_report && <Card><CardHeader><CardTitle>Latest update</CardTitle></CardHeader><CardContent className="space-y-2">
-        <p>{d.latest_report.summary}</p><Link className="text-sm underline" href={`/client/reports/${d.latest_report.id}`}>View full report and video →</Link></CardContent></Card>}
+        <Bullets text={d.latest_report.summary} /><Link className="text-sm underline" href={`/client/reports/${d.latest_report.id}`}>View full report and video →</Link></CardContent></Card>}
       {d.history.length > 0 && <Card><CardHeader><CardTitle>Progress history</CardTitle></CardHeader><CardContent><HistoryChart data={d.history} /></CardContent></Card>}
       <Card><CardHeader><CardTitle>Published reports</CardTitle></CardHeader><CardContent>
         {reports.loading && <Loading rows={2} />}

@@ -535,7 +535,7 @@ def test_accept_all_approves_pending_only_and_never_publishes(world, refstore):
     rid = seed_obs_and_draft(world)
     r = client.post(f"/reports/{rid}/accept-all", headers=H(world.admin))
     assert r.status_code == 200, r.text
-    assert r.json() == {"observations_approved": 1, "packages_accepted": 1}
+    assert r.json() == {"observations_approved": 1, "packages_accepted": 1, "left_for_review": []}
     st = world.c.execute(
         "select review_status, count(*) from public.ai_observations where analysis_id=%s group by 1 order by 1",
         (world.A["analysis_draft"],),
@@ -557,3 +557,47 @@ def test_accept_all_is_admin_only_and_blocked_after_publish(world, refstore):
     assert client.post(f"/reports/{rid}/accept-all", headers=H(world.ca)).status_code == 403
     pub = world.A["report_pub"]
     assert client.post(f"/reports/{pub}/accept-all", headers=H(world.admin)).status_code == 409
+
+
+def test_accept_all_can_hold_back_big_drops_for_a_human_decision(world, refstore):
+    rid = seed_obs_and_draft(world)
+    world.c.execute(  # AI now proposes 20 vs 50 approved earlier: a 30-point drop
+        "update public.progress_reports set package_progress_snapshot = jsonb_set(package_progress_snapshot,"
+        " '{0,ai,proposed_completion_percentage}', '20') where id=%s",
+        (rid,),
+    )
+    r = client.post(f"/reports/{rid}/accept-all", json={"skip_drops": True}, headers=H(world.admin))
+    assert r.status_code == 200, r.text
+    assert r.json()["packages_accepted"] == 0 and r.json()["left_for_review"] == ["Foundation"]
+    row = world.c.execute(
+        "select package_progress_snapshot from public.progress_reports where id=%s", (rid,)
+    ).fetchone()[0]
+    assert next(i for i in row if i["name"] == "Foundation")["decision"] == "pending"
+    # publishing stays blocked until the human decides that package
+    assert client.post(f"/reports/{rid}/publish", headers=H(world.admin)).status_code == 422
+    # without the flag the admin can still accept it knowingly
+    r2 = client.post(f"/reports/{rid}/accept-all", headers=H(world.admin))
+    assert r2.json()["packages_accepted"] == 1 and r2.json()["left_for_review"] == []
+
+
+def test_small_changes_are_not_flagged():
+    from cpm.core import progress
+
+    def item(prev, proposed):
+        return {
+            "work_package_id": "x",
+            "name": "n",
+            "decision": "pending",
+            "previous_approved_percentage": prev,
+            "ai": {"assessable": True, "proposed_completion_percentage": proposed},
+        }
+
+    assert progress.flagged_drops([item(50, 46), item(50, 50), item(50, 70)]) == []
+    assert len(progress.flagged_drops([item(50, 44)])) == 1
+    assert progress.flagged_drops([{**item(50, 0), "decision": "edit"}]) == []
+    assert progress.flagged_drops([{**item(50, 0), "ai": {"assessable": False}}]) == []
+
+
+def test_prompt_asks_for_new_progress_as_bullets():
+    assert "bullet points" in ai.SYSTEM and 'starting with "- "' in ai.SYSTEM
+    assert r"- point\n- point" in ai.SYSTEM

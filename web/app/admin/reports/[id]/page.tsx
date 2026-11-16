@@ -2,6 +2,7 @@
 import { use, useState } from "react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { DropCheckDialog } from "@/components/drop-check-dialog";
 import { ObservationCard } from "@/components/observation-card";
 import { ProgressBar } from "@/components/progress-bar";
 import { ReportView } from "@/components/report-view";
@@ -14,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useAsync } from "@/lib/use-async";
 import { ChangeVsEarlier } from "@/components/change-vs-earlier";
-import { BASIS_LABEL, fmtPct } from "@/lib/validation";
+import { BASIS_LABEL, flaggedDrops, fmtPct } from "@/lib/validation";
 import type { Report, ReportItem } from "@/lib/types";
 
 type Choice = { decision: "pending" | "accept" | "edit" | "retain"; value: string };
@@ -39,6 +40,10 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
     w.work_package_id, { decision: w.decision ?? "pending", value: String(w.approved_percentage ?? "") }])));
   const [confirm, setConfirm] = useState(false);
   const [quickConfirm, setQuickConfirm] = useState(false);
+  const [dropCheck, setDropCheck] = useState<"accept" | "publish" | null>(null);
+  const drops = flaggedDrops(r.work_packages);
+  const acceptAll = (skipDrops: boolean) => run(() => api(`/reports/${id}/accept-all`, { method: "POST", json: skipDrops ? { skip_drops: true } : undefined }),
+    skipDrops ? "Accepted the rest. Please decide the flagged value(s) yourself." : "AI suggestions accepted");
   const [busy, setBusy] = useState(false);
   const items = r.work_packages;
   const payload = () => items.flatMap((w) => {
@@ -68,8 +73,8 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
         <Card><CardContent className="flex flex-wrap items-center justify-between gap-3 pt-5">
           <p className="max-w-xl text-sm">The AI has prepared everything. If the suggestions look right, accept them all in one click; you can still change any item below before publishing.</p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" disabled={busy} onClick={() => run(() => api(`/reports/${id}/accept-all`, { method: "POST" }), "AI suggestions accepted")}>Accept all suggestions</Button>
-            <Button disabled={busy || !summary.trim()} onClick={() => setQuickConfirm(true)}>Accept all &amp; publish</Button>
+            <Button variant="outline" disabled={busy} onClick={() => (drops.length ? setDropCheck("accept") : void acceptAll(false))}>Accept all suggestions</Button>
+            <Button disabled={busy || !summary.trim()} onClick={() => (drops.length ? setDropCheck("publish") : setQuickConfirm(true))}>Accept all &amp; publish</Button>
           </div>
         </CardContent></Card>)}
 
@@ -110,6 +115,10 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
         <Button disabled={busy || !valid || pendingObs > 0 || !summary.trim()} onClick={() => setConfirm(true)}>Publish report</Button>
       </div>
       {(!valid || pendingObs > 0) && <p className="text-sm text-muted-foreground">To publish: decide every work package, review every observation, and add a summary.</p>}
+
+      <DropCheckDialog open={dropCheck !== null} onOpenChange={(o) => !o && setDropCheck(null)} drops={drops}
+        onReviewFirst={() => { setDropCheck(null); void acceptAll(true); }}
+        onAcceptAnyway={() => { const next = dropCheck; setDropCheck(null); if (next === "publish") setQuickConfirm(true); else void acceptAll(false); }} />
 
       <ConfirmDialog open={quickConfirm} onOpenChange={setQuickConfirm} title="Accept all AI suggestions and publish?"
         description="Every pending observation and package value suggested by the AI will be approved as shown, and the report will be published to the assigned clients. Published reports cannot be edited."

@@ -30,3 +30,10 @@ export function validateReferenceFile(file: { size: number; type: string }): str
 export const BASIS_LABEL: Record<string, string> = {
   visible_work: "visible work", target_comparison: "comparison with the finished-site reference", both: "visible work and the finished-site reference",
 };
+
+/** AI value far below the last approved one is usually a model mistake: ask before a bulk accept. */
+export const DROP_THRESHOLD = 5;
+export function flaggedDrops<T extends { decision?: string; previous_approved_percentage: number; ai?: { assessable: boolean; proposed_completion_percentage: number | null } | null }>(items: T[]): T[] {
+  return items.filter((w) => (w.decision ?? "pending") === "pending" && w.ai?.assessable && w.ai.proposed_completion_percentage != null
+    && Number(w.previous_approved_percentage) - Number(w.ai.proposed_completion_percentage) > DROP_THRESHOLD);
+}

@@ -107,6 +107,23 @@ def apply_decisions(items: list[dict], decisions: list[dict]) -> list[dict]:
     return items
 
 
+DROP_THRESHOLD = 5.0  # percentage points
+
+
+def flagged_drops(items: list[dict]) -> list[dict]:
+    """Pending AI proposals clearly below the last approved value: usually a model mistake, not
+    real regression. They need a human decision before a bulk accept."""
+    out = []
+    for i in items:
+        ai = i.get("ai") or {}
+        proposed = ai.get("proposed_completion_percentage")
+        if i["decision"] != "pending" or not ai.get("assessable") or proposed is None:
+            continue
+        if D(i["previous_approved_percentage"]) - D(proposed) > D(DROP_THRESHOLD):
+            out.append(i)
+    return out
+
+
 def pending_items(items: list[dict]) -> list[str]:
     return [i["name"] for i in items if i["decision"] == "pending"]
 

@@ -28,6 +28,12 @@ class Decision(BaseModel):
     approved_percentage: float | None = Field(default=None, ge=0, le=100)
 
 
+class AcceptAllIn(BaseModel):
+    skip_drops: bool = (
+        False  # leave AI values far below the last approved value for a manual decision
+    )
+
+
 class ReportPatch(BaseModel):
     summary: str | None = Field(default=None, max_length=10000)
     packages: list[Decision] | None = None
@@ -135,7 +141,7 @@ def patch_report(report_id: UUID, body: ReportPatch, admin: Admin):
 
 
 @router.post("/reports/{report_id}/accept-all")
-def accept_all(report_id: UUID, admin: Admin):
+def accept_all(report_id: UUID, admin: Admin, body: AcceptAllIn | None = None):
     """One-click review: approve every still-pending observation and accept every AI proposal.
     Rejected observations and explicit edits/retains are left alone. Nothing is published."""
     with user_tx(admin.id) as c:
@@ -145,10 +151,15 @@ def accept_all(report_id: UUID, admin: Admin):
         if r["status"] != "draft":
             raise ApiError(409, "published", "Published reports are immutable")
         items = r["package_progress_snapshot"]
+        held = (
+            {i["work_package_id"] for i in progress.flagged_drops(items)}
+            if (body and body.skip_drops)
+            else set()
+        )
         todo = [
             {"work_package_id": i["work_package_id"], "decision": "accept"}
             for i in items
-            if i["decision"] == "pending"
+            if i["decision"] == "pending" and i["work_package_id"] not in held
         ]
         items = progress.apply_decisions(items, todo)
         c.execute(
@@ -160,7 +171,11 @@ def accept_all(report_id: UUID, admin: Admin):
             "where analysis_id=%s and review_status='pending'",
             (r["analysis_id"],),
         ).rowcount
-    return {"observations_approved": n, "packages_accepted": len(todo)}
+    return {
+        "observations_approved": n,
+        "packages_accepted": len(todo),
+        "left_for_review": [i["name"] for i in items if i["work_package_id"] in held],
+    }
 
 
 @router.patch("/observations/{observation_id}")

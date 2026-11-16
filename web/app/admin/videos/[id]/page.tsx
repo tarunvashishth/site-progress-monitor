@@ -2,6 +2,7 @@
 import { useRouter } from "next/navigation";
 import { use, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Bullets } from "@/components/bullets";
 import { ComparisonPanel, CompareControl } from "@/components/comparison-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ObservationCard } from "@/components/observation-card";
@@ -86,7 +87,7 @@ export default function VideoReview({ params }: { params: Promise<{ id: string }
           <p className="text-muted-foreground">AI output is a suggestion; nothing is visible to clients until you approve and publish.</p>
           <details><summary className="cursor-pointer text-xs text-muted-foreground">Technical details</summary>
             <p className="text-xs text-muted-foreground">Model {d.analysis.model_name} · prompt {d.analysis.prompt_version}</p></details>
-          {d.analysis.structured_response?.summary && <p>{d.analysis.structured_response.summary}</p>}
+          {d.analysis.structured_response?.summary && <Bullets text={d.analysis.structured_response.summary} />}
           {d.analysis.error_message && <p className="text-red-700">{d.analysis.error_message}</p>}
           {!!d.analysis.structured_response?.validation_warnings?.length && (
             <details><summary className="cursor-pointer text-amber-800">{d.analysis.structured_response.validation_warnings.length} validation note(s)</summary>

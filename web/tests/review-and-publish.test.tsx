@@ -107,3 +107,40 @@ describe("one-click review", () => {
     expect(screen.queryByRole("button", { name: "Accept all suggestions" })).toBeNull();
   });
 });
+
+describe("check before accepting big drops", () => {
+  beforeEach(() => { apiMock.mockReset(); apiMock.mockResolvedValue({}); });
+  const dropped = () => {
+    const d = draft({ observations: [obs] });
+    d.work_packages[0] = { ...d.work_packages[0], previous_approved_percentage: 50, ai: { assessable: true, proposed_completion_percentage: 10, confidence: 0.9, reasoning: "x" } };
+    return d;
+  };
+  it("asks before a bulk accept and can hold the flagged package back", async () => {
+    render(<DraftEditor id="r1" r={dropped()} reload={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept all suggestions" }));
+    expect(apiMock).not.toHaveBeenCalled();
+    expect(await screen.findByText(/AI 10% vs approved 50%/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Accept the rest, review these" }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/reports/r1/accept-all", { method: "POST", json: { skip_drops: true } }));
+    expect(apiMock).not.toHaveBeenCalledWith("/reports/r1/publish", expect.anything());
+  });
+  it("lets the admin accept anyway, knowingly", async () => {
+    render(<DraftEditor id="r1" r={dropped()} reload={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept all suggestions" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept anyway" }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/reports/r1/accept-all", { method: "POST", json: undefined }));
+  });
+  it("accept-all-and-publish also stops at the check, then still needs its own confirmation", async () => {
+    render(<DraftEditor id="r1" r={dropped()} reload={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept all & publish" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Accept anyway" }));
+    expect(apiMock).not.toHaveBeenCalled();  // nothing happens until the publish confirmation
+    expect(await screen.findByText("Accept all AI suggestions and publish?")).toBeInTheDocument();
+  });
+  it("does not interrupt when nothing dropped", async () => {
+    render(<DraftEditor id="r1" r={draft({ observations: [obs] })} reload={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept all suggestions" }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/reports/r1/accept-all", { method: "POST", json: undefined }));
+    expect(screen.queryByText(/Check this value first/)).toBeNull();
+  });
+});

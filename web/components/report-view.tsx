@@ -1,4 +1,5 @@
 "use client";
+import { Bullets } from "@/components/bullets";
 import { useRef } from "react";
 import { EvidenceThumbs } from "@/components/evidence-thumbs";
 import { ProgressBar } from "@/components/progress-bar";
@@ -21,7 +22,7 @@ export function ReportView({ report }: { report: Report }) {
             Assessment coverage {fmtPct(report.assessment_coverage_percentage)} of project weight.
             {report.retained_package_count > 0 && ` ${report.retained_package_count} work package(s) keep their earlier approved value.`}
           </p>
-          <p className="whitespace-pre-wrap">{report.summary}</p>
+          <Bullets text={report.summary} />
         </CardContent>
       </Card>
       <Card>
