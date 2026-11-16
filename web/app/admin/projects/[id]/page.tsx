@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PackageEditor, packageErrors, type PackageRow } from "@/components/package-editor";
+import { NextStep } from "@/components/next-step";
 import { PackageProgressList } from "@/components/package-progress";
 import { ReferenceImages } from "@/components/reference-images";
 import { ProgressBar } from "@/components/progress-bar";
@@ -28,10 +29,17 @@ export default function AdminProject({ params }: { params: Promise<{ id: string 
   const [editing, setEditing] = useState<PackageRow[] | null>(null);
   const [pkgError, setPkgError] = useState<string | null>(null);
 
+  const busy = videos.data?.items.some((v) => ["queued", "processing", "uploaded"].includes(v.status));
+  const reloadVideos = videos.reload;
+  useEffect(() => {  // follow processing automatically: no manual refreshing
+    if (!busy) return;
+    const t = setInterval(reloadVideos, 5000);
+    return () => clearInterval(t);
+  }, [busy, reloadVideos]);
+
   if (project.loading) return <Loading />;
   if (project.error) return <ErrorState error={project.error} retry={project.reload} />;
   const p = project.data!;
-  const active = videos.data?.items.some((v) => ["queued", "processing"].includes(v.status));
 
   async function assign(e: React.FormEvent) {
     e.preventDefault();
@@ -56,6 +64,9 @@ export default function AdminProject({ params }: { params: Promise<{ id: string 
         <p className="text-sm text-muted-foreground">{p.location ?? "No location"} · started {fmtDate(p.start_date)} · <StatusBadge status={p.status} /></p>
         {p.description && <p className="mt-2 text-sm">{p.description}</p>}
       </div>
+      {videos.data && <NextStep videos={videos.data.items} onRetry={async (vid) => {
+        try { await api(`/videos/${vid}/retry`, { method: "POST" }); toast.success("Retry queued"); videos.reload(); } catch (e) { toast.error((e as Error).message); } }} />}
+
       <Card><CardHeader><CardTitle>Approved progress</CardTitle></CardHeader><CardContent className="space-y-5">
         <ProgressBar value={p.overall_progress} size="lg" label="Overall (approved, published)" />
         {p.latest_report && <p className="text-sm text-muted-foreground">Latest assessment {fmtDate(p.latest_report.published_at)} · coverage {fmtPct(p.latest_report.assessment_coverage_percentage)}</p>}
@@ -82,7 +93,6 @@ export default function AdminProject({ params }: { params: Promise<{ id: string 
         {videos.loading && <Loading rows={2} />}
         {videos.error && <ErrorState error={videos.error} retry={videos.reload} />}
         {videos.data?.items.length === 0 && <Empty title="No videos uploaded" />}
-        {active && <Button variant="ghost" size="sm" onClick={videos.reload}>Refresh status</Button>}
         <ul className="divide-y">
           {videos.data?.items.map((v) => (
             <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">

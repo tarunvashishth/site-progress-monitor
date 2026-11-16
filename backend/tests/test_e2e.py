@@ -117,10 +117,9 @@ def test_full_mvp_flow(world, video_bytes, monkeypatch):
                     for p in messages[1]["content"]
                     if p.get("type") == "text" and p["text"].startswith("Frame ")
                 ]
-                assert (
-                    len(frames) >= 2
-                    and "last approved completion 50" in messages[1]["content"][0]["text"]
-                )
+                head = messages[1]["content"][0]["text"]
+                # earlier approved values are NOT shown to the model (anchoring), only the package list
+                assert len(frames) >= 2 and "weight" in head and "completion 50" not in head
                 return json.dumps(
                     {
                         "summary": "Foundation excavation continues; roof not visible.",
@@ -173,9 +172,10 @@ def test_full_mvp_flow(world, video_bytes, monkeypatch):
         )  # nothing published yet
 
         # 9-10: admin reviews evidence, edits text, decides every package
-        rid = client.post(
-            f"/projects/{pid}/reports/draft", headers=adm, json={"video_id": vid}
-        ).json()["id"]
+        # the worker already prepared the draft; creating it again is refused and points to it
+        dup = client.post(f"/projects/{pid}/reports/draft", headers=adm, json={"video_id": vid})
+        assert dup.status_code == 409 and dup.json()["error"]["code"] == "report_exists"
+        rid = dup.json()["error"]["details"]["report_id"]
         assert client.get(f"/reports/{rid}", headers=cl).status_code == 404  # draft hidden
         oid = an["observations"][0]["id"]
         client.patch(

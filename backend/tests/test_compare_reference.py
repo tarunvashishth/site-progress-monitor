@@ -150,6 +150,21 @@ def test_prompt_labels_targets_and_previous_before_current():
     assert "south elevation" in joined and "Earlier capture for comparison" in joined
 
 
+def test_prompt_hides_earlier_approved_values_to_avoid_anchoring():
+    msgs = ai.build_messages(
+        {"name": "P"},
+        [{"id": "p", "name": "Roof", "weight_percentage": 40, "description": "Steel roof"}],
+        {"p": 37.5},
+        [{"frame_index": 0, "timestamp_seconds": 1, "jpeg": b"x"}],
+        {"date": "2026-01-01", "summary": "Earlier work described"},
+        [],
+    )
+    head = msgs[1]["content"][0]["text"]
+    assert "Roof" in head and "weight 40%" in head and "Steel roof" in head
+    assert "37.5" not in head and "approved completion" not in head
+    assert "NOT told earlier approved percentages" in msgs[0]["content"]
+
+
 # ---------- RLS ----------
 
 
@@ -403,7 +418,8 @@ def test_second_day_is_compared_with_first_and_uses_reference(world, video_file,
     # AI still proposes only: observations pending, nothing published
     assert (
         world.c.execute(
-            "select count(*) from public.progress_reports where video_id=%s", (day2,)
+            "select count(*) from public.progress_reports where video_id=%s and status='published'",
+            (day2,),
         ).fetchone()[0]
         == 0
     )
@@ -427,3 +443,117 @@ def test_no_reference_means_basis_reset_and_no_earlier_means_no_comparison(
     assert sr["comparison"] == [] and "compared_with" not in sr
     assert sr["package_assessments"][0]["basis"] == "visible_work"
     assert any("discarded" in w for w in sr["validation_warnings"])
+
+
+# ---------- simple admin flow: auto draft + accept-all ----------
+
+
+def test_draft_is_created_automatically_but_stays_unreviewed(world, video_file, monkeypatch):
+    configure_ai(monkeypatch)
+    world.c.execute("delete from public.video_processing_jobs")
+    st, p = WorkerStorage(video_file), Provider(reply(world, "visible_work"))
+    v = queue(world, "auto", date="2026-06-01")
+    assert worker.run_once(st, p) is True
+    rep = world.c.execute(
+        "select status, package_progress_snapshot from public.progress_reports where video_id=%s",
+        (v,),
+    ).fetchone()
+    assert rep and rep[0] == "draft"
+    decisions = {i["name"]: i["decision"] for i in rep[1]}
+    assert decisions["Foundation"] == "pending"  # AI value proposed, not accepted
+    assert decisions["Roof"] == "retain"  # not assessed -> keeps earlier value, never 0
+    pending = world.c.execute(
+        "select count(*) from public.ai_observations o join public.ai_analyses a on a.id=o.analysis_id "
+        "where a.video_id=%s and o.review_status<>'pending'",
+        (v,),
+    ).fetchone()[0]
+    assert pending == 0  # nothing approved automatically
+    # re-analysis does not create a second report
+    world.c.execute(
+        "insert into public.video_processing_jobs (video_id, job_type, force_reanalysis) values (%s,'analyze',true)",
+        (v,),
+    )
+    worker.run_once(st, p)
+    assert (
+        world.c.execute(
+            "select count(*) from public.progress_reports where video_id=%s", (v,)
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def seed_obs_and_draft(world):
+    """Draft for the World's draft video: package 1 pending AI proposal, one pending + one rejected observation."""
+    a = world.A
+    c = world.c
+    c.execute("delete from public.progress_reports where id=%s", (a["report_draft"],))
+    c.execute(
+        "update public.ai_observations set review_status='pending' where id=%s", (a["obs_draft"],)
+    )
+    ev = json.dumps([{"frame_id": a["frame_draft"], "frame_index": 0, "timestamp_seconds": 5}])
+    c.execute(
+        "insert into public.ai_observations (analysis_id,project_id,title,description,observation_type,"
+        "confidence,evidence_frames,review_status,ai_original) values (%s,%s,'r','d','ongoing',0.5,%s,"
+        "'rejected','{}')",
+        (a["analysis_draft"], a["id"], ev),
+    )
+    items = [
+        {
+            "work_package_id": a["wp1"],
+            "name": "Foundation",
+            "weight_percentage": 60,
+            "previous_approved_percentage": 50,
+            "approved_percentage": None,
+            "assessed": False,
+            "decision": "pending",
+            "ai": {
+                "assessable": True,
+                "proposed_completion_percentage": 70,
+                "confidence": 0.8,
+                "reasoning": "x",
+            },
+        },
+        {
+            "work_package_id": a["wp2"],
+            "name": "Roof",
+            "weight_percentage": 40,
+            "previous_approved_percentage": 0,
+            "approved_percentage": 0,
+            "assessed": False,
+            "decision": "retain",
+            "ai": None,
+        },
+    ]
+    return c.execute(
+        "insert into public.progress_reports (project_id,video_id,analysis_id,summary,package_progress_snapshot)"
+        " values (%s,%s,%s,'s',%s) returning id",
+        (a["id"], a["video_draft"], a["analysis_draft"], json.dumps(items)),
+    ).fetchone()[0]
+
+
+def test_accept_all_approves_pending_only_and_never_publishes(world, refstore):
+    rid = seed_obs_and_draft(world)
+    r = client.post(f"/reports/{rid}/accept-all", headers=H(world.admin))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"observations_approved": 1, "packages_accepted": 1}
+    st = world.c.execute(
+        "select review_status, count(*) from public.ai_observations where analysis_id=%s group by 1 order by 1",
+        (world.A["analysis_draft"],),
+    ).fetchall()
+    assert dict(st) == {"approved": 1, "rejected": 1}  # the rejected one stays rejected
+    row = world.c.execute(
+        "select status, package_progress_snapshot from public.progress_reports where id=%s", (rid,)
+    ).fetchone()
+    assert row[0] == "draft"  # publishing is still a separate, explicit admin action
+    foundation = next(i for i in row[1] if i["name"] == "Foundation")
+    assert foundation["decision"] == "accept" and foundation["approved_percentage"] == 70.0
+    # publish still works afterwards and uses only approved values
+    pub = client.post(f"/reports/{rid}/publish", headers=H(world.admin))
+    assert pub.status_code == 200, pub.text
+
+
+def test_accept_all_is_admin_only_and_blocked_after_publish(world, refstore):
+    rid = seed_obs_and_draft(world)
+    assert client.post(f"/reports/{rid}/accept-all", headers=H(world.ca)).status_code == 403
+    pub = world.A["report_pub"]
+    assert client.post(f"/reports/{pub}/accept-all", headers=H(world.admin)).status_code == 409

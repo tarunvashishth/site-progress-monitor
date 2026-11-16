@@ -11,6 +11,7 @@ from cpm.api.routers.videos import Store
 from cpm.core import progress
 from cpm.core.config import get_settings
 from cpm.core.db import Jsonb, all_, one, user_tx
+from cpm.core.drafts import insert_draft
 from cpm.core.errors import ApiError, NotFound
 
 router = APIRouter()
@@ -107,17 +108,7 @@ def create_draft(project_id: UUID, body: DraftIn, admin: Admin):
         )
         if not a:
             raise ApiError(409, "no_analysis", "No completed AI analysis available for this video")
-        pkgs = _packages(c, project_id)
-        cur = progress.current_values(pkgs, _last_snapshot(c, project_id))
-        sr = a["structured_response"] or {}
-        items = progress.build_draft_items(pkgs, cur, sr.get("package_assessments", []))
-        r = one(
-            c,
-            "insert into public.progress_reports (project_id, video_id, analysis_id, summary, "
-            "package_progress_snapshot, created_by) values (%s,%s,%s,%s,%s,%s) returning id",
-            (project_id, body.video_id, a["id"], sr.get("summary", ""), Jsonb(items), admin.id),
-        )
-        return {"id": r["id"]}
+        return {"id": insert_draft(c, project_id, body.video_id, a, admin.id)}
 
 
 @router.patch("/reports/{report_id}")
@@ -141,6 +132,35 @@ def patch_report(report_id: UUID, body: ReportPatch, admin: Admin):
             (body.summary if body.summary is not None else r["summary"], Jsonb(items), report_id),
         )
     return {"ok": True}
+
+
+@router.post("/reports/{report_id}/accept-all")
+def accept_all(report_id: UUID, admin: Admin):
+    """One-click review: approve every still-pending observation and accept every AI proposal.
+    Rejected observations and explicit edits/retains are left alone. Nothing is published."""
+    with user_tx(admin.id) as c:
+        r = one(c, "select * from public.progress_reports where id=%s for update", (report_id,))
+        if not r:
+            raise NotFound("Report")
+        if r["status"] != "draft":
+            raise ApiError(409, "published", "Published reports are immutable")
+        items = r["package_progress_snapshot"]
+        todo = [
+            {"work_package_id": i["work_package_id"], "decision": "accept"}
+            for i in items
+            if i["decision"] == "pending"
+        ]
+        items = progress.apply_decisions(items, todo)
+        c.execute(
+            "update public.progress_reports set package_progress_snapshot=%s where id=%s",
+            (Jsonb(items), report_id),
+        )
+        n = c.execute(
+            "update public.ai_observations set review_status='approved' "
+            "where analysis_id=%s and review_status='pending'",
+            (r["analysis_id"],),
+        ).rowcount
+    return {"observations_approved": n, "packages_accepted": len(todo)}
 
 
 @router.patch("/observations/{observation_id}")

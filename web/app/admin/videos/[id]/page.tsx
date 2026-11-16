@@ -72,8 +72,8 @@ export default function VideoReview({ params }: { params: Promise<{ id: string }
 
       <div className="flex flex-wrap gap-2">
         {status === "failed" && <Button onClick={() => act(() => api(`/videos/${id}/retry`, { method: "POST" }), "Retry queued")}>Retry processing</Button>}
-        {(status === "analyzed") && !d.video.report_status && <Button onClick={createDraft}>Create draft report</Button>}
-        {d.video.report_status && <Button variant="secondary" onClick={createDraft}>Open report</Button>}
+        {(status === "analyzed") && !d.video.report_status && <Button onClick={createDraft}>Review &amp; publish</Button>}
+        {d.video.report_status && <Button onClick={createDraft}>{d.video.report_status === "published" ? "Open report" : "Review & publish"}</Button>}
         {(status === "analyzed" || status === "failed") && d.frames.length > 0 && d.video.report_status !== "published" && (
           <Button variant="outline" onClick={() => setConfirm(true)}>Re-run AI analysis</Button>)}
       </div>
@@ -83,7 +83,9 @@ export default function VideoReview({ params }: { params: Promise<{ id: string }
 
       {d.analysis && (
         <Card><CardHeader><CardTitle>AI analysis <StatusBadge status={d.analysis.status} /></CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
-          <p className="text-muted-foreground">Model {d.analysis.model_name} · prompt {d.analysis.prompt_version}. AI output is a suggestion; nothing is visible to clients until you approve and publish.</p>
+          <p className="text-muted-foreground">AI output is a suggestion; nothing is visible to clients until you approve and publish.</p>
+          <details><summary className="cursor-pointer text-xs text-muted-foreground">Technical details</summary>
+            <p className="text-xs text-muted-foreground">Model {d.analysis.model_name} · prompt {d.analysis.prompt_version}</p></details>
           {d.analysis.structured_response?.summary && <p>{d.analysis.structured_response.summary}</p>}
           {d.analysis.error_message && <p className="text-red-700">{d.analysis.error_message}</p>}
           {!!d.analysis.structured_response?.validation_warnings?.length && (

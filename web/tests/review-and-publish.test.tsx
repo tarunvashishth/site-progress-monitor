@@ -81,3 +81,29 @@ describe("report publishing flow", () => {
       { work_package_id: "w2", decision: "retain", approved_percentage: undefined }]);
   });
 });
+
+describe("one-click review", () => {
+  beforeEach(() => { apiMock.mockReset(); apiMock.mockResolvedValue({}); });
+  it("accepts all AI suggestions without publishing", async () => {
+    const reload = vi.fn();
+    render(<DraftEditor id="r1" r={draft({ observations: [obs] })} reload={reload} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept all suggestions" }));
+    await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/reports/r1/accept-all", { method: "POST" }));
+    expect(apiMock).not.toHaveBeenCalledWith("/reports/r1/publish", expect.anything());
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+  });
+  it("accept-all-and-publish needs an explicit confirmation, then runs accept, summary, publish in order", async () => {
+    render(<DraftEditor id="r1" r={draft({ observations: [obs] })} reload={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Accept all & publish" }));
+    expect(apiMock).not.toHaveBeenCalled();
+    await userEvent.click((await screen.findAllByRole("button", { name: "Accept all & publish" })).at(-1)!);
+    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(3));
+    expect(apiMock.mock.calls.map((c) => c[0])).toEqual(["/reports/r1/accept-all", "/reports/r1", "/reports/r1/publish"]);
+  });
+  it("hides the shortcut once everything is already decided", () => {
+    const done = draft();
+    done.work_packages[0] = { ...done.work_packages[0], decision: "accept", approved_percentage: 70 };
+    render(<DraftEditor id="r1" r={done} reload={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Accept all suggestions" })).toBeNull();
+  });
+});

@@ -6,7 +6,7 @@
    The browser PUTs the file straight to private Storage; `POST /videos/{id}/complete` verifies the object exists and queues a job.
 3. The worker claims a job (`claim_next_job()`, `SKIP LOCKED`, stale-lock recovery, max 3 attempts), downloads the video, validates it with `ffprobe`,
    samples frames with OpenCV (interval, blur filter, dHash de-duplication, cap), stores frames + thumbnails in a private bucket and inserts `video_frames`.
-4. The worker builds the prompt (project + packages + last approved values + up to 3 earlier evidence frames), calls the configured Qwen3-VL endpoint,
+4. The worker builds the prompt (project + packages + up to 3 earlier evidence frames; earlier approved percentages are deliberately NOT shown to the model, to avoid anchoring: the review screen compares its suggestion with them instead), calls the configured Qwen3-VL endpoint,
    validates the JSON with Pydantic (one repair retry), checks every referenced package id and frame index against real records, and stores
    `ai_analyses` (model, prompt version, raw + structured output) and `ai_observations` (all `pending`) in one transaction.
 5. Admin reviews observations (edit / approve / reject), creates a **draft report** whose package items start as AI proposals awaiting a decision
@@ -29,4 +29,4 @@
 ## Comparison with earlier days and finished-site references
 - **Different-day comparison:** analysing a video compares it with an earlier analyzed video of the same project: the admin's choice (`compare_to_video_id` on `POST /videos/{id}/analyze`), else the latest earlier capture. Current frames are paired with earlier frames of a *similar view* (dHash distance <= `COMPARE_MAX_HASH_DISTANCE`, at most `COMPARE_MAX_PAIRS`); if none look alike the model is told not to claim change. The model returns a per-package `comparison` (comparable / changed / evidence frames), validated in `pipeline/ai.py`; evidence timestamps come from our frame rows.
 - **Finished-site reference:** admins upload up to 6 renders/elevations per project (`reference_images`, private `reference-images` bucket, admin-only RLS, re-encoded JPEG). They are sent as `TARGET-n` images so the model can judge how much of the finished scope is visible. Each assessment carries a `basis` (`visible_work`, `target_comparison`, `both`); `target_comparison` is reset to `visible_work` when no reference exists.
-- Nothing changes the core rules: these are suggestions, admins approve each value, progress is still computed from approved values only, unknown stays "retain". Prompt version is now `v2`.
+- Nothing changes the core rules: these are suggestions, admins approve each value, progress is still computed from approved values only, unknown stays "retain". Prompt version is now `v3`.

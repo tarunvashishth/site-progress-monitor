@@ -7,6 +7,7 @@ from pathlib import Path
 from cpm.core import progress
 from cpm.core.config import Settings
 from cpm.core.db import Jsonb, all_, one, service_tx
+from cpm.core.drafts import auto_draft
 from cpm.core.storage import Storage, StorageError
 from cpm.pipeline import ai, frames
 from cpm.pipeline.compare import pair_frames
@@ -253,6 +254,7 @@ def analyze(
                     "update public.drone_videos set status='analyzed', processing_error=null where id=%s",
                     (video["id"],),
                 )
+                auto_draft(c, video, same["id"], job.get("created_by"))
                 return
     try:
         imgs = [
@@ -349,3 +351,8 @@ def analyze(
             "update public.drone_videos set status='analyzed', processing_error=null where id=%s",
             (video["id"],),
         )
+    try:  # convenience only: the admin still reviews and publishes
+        with service_tx() as c:
+            auto_draft(c, video, analysis_id, job.get("created_by"))
+    except Exception:  # noqa: BLE001 - never fail a finished analysis because of the draft
+        log.exception("could not auto-create the draft report for video %s", video["id"])

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useAsync } from "@/lib/use-async";
+import { ChangeVsEarlier } from "@/components/change-vs-earlier";
 import { BASIS_LABEL, fmtPct } from "@/lib/validation";
 import type { Report, ReportItem } from "@/lib/types";
 
@@ -28,7 +29,8 @@ export default function AdminReport({ params }: { params: Promise<{ id: string }
     <div className="space-y-4"><div className="flex items-center gap-2"><h1 className="text-2xl font-semibold">Published report</h1><StatusBadge status="published" /></div>
       <p className="text-sm text-muted-foreground">Published reports are immutable snapshots.</p><ReportView report={r} /></div>);
 
-  return <DraftEditor key={id} id={id} r={r} reload={rep.reload} />;
+  // remount when decisions change on the server (e.g. after "Accept all") so the form shows them
+  return <DraftEditor key={`${id}:${r.work_packages.map((w) => w.decision).join(",")}`} id={id} r={r} reload={rep.reload} />;
 }
 
 export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: () => void }) {
@@ -36,6 +38,7 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
   const [choices, setChoices] = useState<Record<string, Choice>>(() => Object.fromEntries(r.work_packages.map((w) => [
     w.work_package_id, { decision: w.decision ?? "pending", value: String(w.approved_percentage ?? "") }])));
   const [confirm, setConfirm] = useState(false);
+  const [quickConfirm, setQuickConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const items = r.work_packages;
   const payload = () => items.flatMap((w) => {
@@ -61,6 +64,15 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
         <p className="text-sm text-muted-foreground">Coverage {fmtPct(r.assessment_coverage_percentage)} · packages not yet decided count as their earlier approved value in this preview.</p>
       </CardContent></Card>
 
+      {(pendingObs > 0 || items.some((w) => (choices[w.work_package_id]?.decision ?? "pending") === "pending")) && (
+        <Card><CardContent className="flex flex-wrap items-center justify-between gap-3 pt-5">
+          <p className="max-w-xl text-sm">The AI has prepared everything. If the suggestions look right, accept them all in one click; you can still change any item below before publishing.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" disabled={busy} onClick={() => run(() => api(`/reports/${id}/accept-all`, { method: "POST" }), "AI suggestions accepted")}>Accept all suggestions</Button>
+            <Button disabled={busy || !summary.trim()} onClick={() => setQuickConfirm(true)}>Accept all &amp; publish</Button>
+          </div>
+        </CardContent></Card>)}
+
       <Card><CardHeader><CardTitle>Work package progress</CardTitle></CardHeader><CardContent className="space-y-5">
         {items.map((w: ReportItem) => {
           const c = choices[w.work_package_id] ?? { decision: "pending", value: "" };
@@ -69,7 +81,8 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
             <fieldset key={w.work_package_id} className="space-y-2 border-b pb-4 last:border-0">
               <legend className="font-medium">{w.name} <span className="text-sm font-normal text-muted-foreground">weight {w.weight_percentage}% · earlier approved {fmtPct(w.previous_approved_percentage)}</span></legend>
               {ai && ai.assessable
-                ? <p className="text-sm">AI suggests <b>{fmtPct(ai.proposed_completion_percentage)}</b> (confidence {Math.round(ai.confidence * 100)}%{ai.basis ? ` · based on ${BASIS_LABEL[ai.basis] ?? ai.basis}` : ""}): {ai.reasoning}</p>
+                ? <p className="text-sm">AI suggests <b>{fmtPct(ai.proposed_completion_percentage)}</b> (confidence {Math.round(ai.confidence * 100)}%{ai.basis ? ` · based on ${BASIS_LABEL[ai.basis] ?? ai.basis}` : ""}): {ai.reasoning}
+                  {" "}<ChangeVsEarlier proposed={ai.proposed_completion_percentage} earlier={w.previous_approved_percentage} /></p>
                 : <p className="text-sm text-muted-foreground">Not assessable from the footage{ai?.reasoning ? `: ${ai.reasoning}` : ""}. Unknown is not treated as 0%.</p>}
               <div className="flex flex-wrap items-center gap-4 text-sm">
                 {ai?.assessable && <label className="flex items-center gap-1.5"><input type="radio" name={w.work_package_id} checked={c.decision === "accept"} onChange={() => setChoice(w.work_package_id, { decision: "accept" })} />Accept AI value</label>}
@@ -97,6 +110,14 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
         <Button disabled={busy || !valid || pendingObs > 0 || !summary.trim()} onClick={() => setConfirm(true)}>Publish report</Button>
       </div>
       {(!valid || pendingObs > 0) && <p className="text-sm text-muted-foreground">To publish: decide every work package, review every observation, and add a summary.</p>}
+
+      <ConfirmDialog open={quickConfirm} onOpenChange={setQuickConfirm} title="Accept all AI suggestions and publish?"
+        description="Every pending observation and package value suggested by the AI will be approved as shown, and the report will be published to the assigned clients. Published reports cannot be edited."
+        confirmLabel="Accept all & publish" onConfirm={() => run(async () => {
+          await api(`/reports/${id}/accept-all`, { method: "POST" });
+          await api(`/reports/${id}`, { method: "PATCH", json: { summary } });
+          await api(`/reports/${id}/publish`, { method: "POST" });
+        }, "Report published")} />
 
       <ConfirmDialog open={confirm} onOpenChange={setConfirm} title="Publish this report?"
         description="Clients assigned to this project will see the approved progress, observations and video. Published reports cannot be edited."

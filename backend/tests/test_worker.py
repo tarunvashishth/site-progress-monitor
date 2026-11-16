@@ -179,10 +179,11 @@ def test_happy_path_extracts_frames_and_stores_analysis(world, video_file, monke
     ).fetchone()
     assert o == ("pending", 2, "Foundation")  # AI never auto-approves
     assert (
-        world.c.execute(
-            "select count(*) from public.progress_reports where video_id=%s", (v,)
-        ).fetchone()[0]
-        == 0
+        world.c.execute(  # a draft is prepared automatically; nothing is ever published by the worker
+            "select status, count(*) from public.progress_reports where video_id=%s group by 1",
+            (v,),
+        ).fetchall()
+        == [("draft", 1)]
     )
     assert worker.run_once(st, p) is False  # queue empty
 

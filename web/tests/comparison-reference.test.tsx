@@ -125,3 +125,49 @@ describe("CompareControl", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+import { ChangeVsEarlier } from "@/components/change-vs-earlier";
+describe("ChangeVsEarlier", () => {
+  it("shows the difference to the earlier approved value", () => {
+    render(<ChangeVsEarlier proposed={60} earlier={50} />);
+    expect(screen.getByText(/\+10 points vs earlier approved 50%/)).toBeInTheDocument();
+  });
+  it("warns when the suggestion is clearly lower than approved before", () => {
+    render(<ChangeVsEarlier proposed={30} earlier={50} />);
+    expect(screen.getByText(/-20 points.*check the evidence/)).toBeInTheDocument();
+  });
+  it("renders nothing for an unassessable package", () => {
+    const { container } = render(<ChangeVsEarlier proposed={null} earlier={50} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+import { NextStep } from "@/components/next-step";
+import type { VideoRow } from "@/lib/types";
+const row = (o: Partial<VideoRow>): VideoRow => ({ id: "v", original_filename: "a.mp4", capture_date: "2026-06-01", description: null, status: "analyzed",
+  processing_error: null, duration_seconds: 1, file_size: 1, job_status: null, job_type: null, attempts: null, job_error: null, report_id: null, report_status: null, ...o });
+describe("NextStep", () => {
+  it("asks for the first upload when there are no videos", () => {
+    render(<NextStep videos={[]} onRetry={vi.fn()} />);
+    expect(screen.getByText(/Upload the first drone video/)).toBeInTheDocument();
+  });
+  it("says nothing is needed while processing", () => {
+    render(<NextStep videos={[row({ status: "processing" })]} onRetry={vi.fn()} />);
+    expect(screen.getByText(/updates by itself/)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+  it("offers a retry for a failed video", async () => {
+    const retry = vi.fn();
+    render(<NextStep videos={[row({ id: "bad", status: "failed", processing_error: "too long" })]} onRetry={retry} />);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(retry).toHaveBeenCalledWith("bad");
+  });
+  it("links straight to the draft report that needs review", () => {
+    render(<NextStep videos={[row({ report_id: "r9", report_status: "draft" })]} onRetry={vi.fn()} />);
+    expect(screen.getByRole("link", { name: "Review & publish" })).toHaveAttribute("href", "/admin/reports/r9");
+  });
+  it("says all caught up when everything is published", () => {
+    render(<NextStep videos={[row({ report_id: "r1", report_status: "published" })]} onRetry={vi.fn()} />);
+    expect(screen.getByText(/All caught up/)).toBeInTheDocument();
+  });
+});

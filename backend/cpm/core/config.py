@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     qwen_vl_model: str = ""
     qwen_vl_timeout_sec: float = 180.0
     qwen_vl_json_mode: bool = True
-    prompt_version: str = "v2"
+    prompt_version: str = "v3"
 
     @property
     def public_supabase_url(self) -> str:
