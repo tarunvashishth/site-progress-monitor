@@ -65,3 +65,15 @@ publishes the raw `.next` folder as static files and every route returns 404). I
 2. `HF_TOKEN=hf_xxx deploy/hf-space.sh <user>/<space>`
 3. Space → Settings → *Variables and secrets*: add every key from `backend/.env.example` (use the Supabase **direct** DB string, or the session pooler if direct is IPv6-only and unreachable), with `WEB_ORIGIN=https://site-progress-monitor-mvp.netlify.app`.
 4. Set `NEXT_PUBLIC_API_URL=https://<user>-<space>.hf.space` in `web/netlify.toml` and redeploy the frontend. Check `/healthz`.
+
+## Free alternative: Cloudflare Tunnel (API + worker on your own machine)
+Cloudflare's free plan cannot run the Python/FFmpeg worker, but a Tunnel exposes a local Docker stack over free HTTPS:
+1. Fill `backend/.env` (set `WEB_ORIGIN` to the Netlify URL), then `docker compose --profile tunnel up --build -d`.
+2. `docker compose logs tunnel | grep trycloudflare` gives the API URL; put it in `NEXT_PUBLIC_API_URL` (`web/netlify.toml`) and redeploy the frontend.
+3. The quick-tunnel URL changes on every restart. For a stable URL, create a named tunnel in Cloudflare Zero Trust (needs a domain on Cloudflare) and use `command: tunnel run` with `TUNNEL_TOKEN`.
+The API is only reachable while the machine is on.
+
+## Current deployment (Oracle Always Free VM)
+API + worker + a named Cloudflare Tunnel (`https://spm-api.cuelatch.com`, token in the VM's `~/site-progress-monitor/.env` as `TUNNEL_TOKEN`) run from `~/site-progress-monitor` on the Oracle ARM VM (`API_PORT=8010`, since 8000 is used there):
+`DOCKER_CONFIG=$HOME/.dockercfg docker compose --profile tunnel up -d`. The VM is IPv4-only, so `DATABASE_URL` uses the Supabase **session pooler**
+(`cpm_api.<ref>@aws-0-ap-south-1.pooler.supabase.com:5432`). The hostname is stable; ingress is managed in Cloudflare Zero Trust.

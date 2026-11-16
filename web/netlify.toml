@@ -7,7 +7,7 @@
   NODE_VERSION = "22"
   NEXT_PUBLIC_SUPABASE_URL = "https://zlszrookwxurvollnbvb.supabase.co"
   NEXT_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_gPA1fLzgnJwa5oxEJ9YYRA_zlcfFImq"
-  NEXT_PUBLIC_API_URL = "http://localhost:8000"
+  NEXT_PUBLIC_API_URL = "https://spm-api.cuelatch.com"
   NEXT_PUBLIC_MAX_VIDEO_MB = "2048"
 
 [[plugins]]
