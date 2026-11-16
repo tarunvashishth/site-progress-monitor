@@ -105,3 +105,14 @@ class Storage:
         )
         if r.status_code >= 300:
             raise StorageError(f"upload failed ({r.status_code})")
+
+    def remove(self, bucket: str, path: str) -> None:
+        r = httpx.request(
+            "DELETE",
+            f"{self.base}/object/{bucket}",
+            json={"prefixes": [path]},
+            headers=self.h,
+            timeout=20,
+        )
+        if r.status_code >= 300:
+            raise StorageError(f"delete failed ({r.status_code})")

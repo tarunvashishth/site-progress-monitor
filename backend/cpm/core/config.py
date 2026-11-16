@@ -12,7 +12,9 @@ class Settings(BaseSettings):
     supabase_url: str = "http://127.0.0.1:54321"
     supabase_public_url: str = ""  # browser-reachable Supabase URL; defaults to supabase_url
     supabase_service_role_key: str = ""
-    supabase_anon_key: str = ""  # optional: `apikey` header for Storage; defaults to the service-role key
+    supabase_anon_key: str = (
+        ""  # optional: `apikey` header for Storage; defaults to the service-role key
+    )
     supabase_jwt_secret: str = ""  # HS256 projects; leave empty to verify via JWKS
     web_origin: str = "http://localhost:3000"
 
@@ -21,6 +23,9 @@ class Settings(BaseSettings):
     signed_url_ttl_sec: int = 3600
     videos_bucket: str = "drone-videos"
     frames_bucket: str = "video-frames"
+    reference_bucket: str = "reference-images"
+    reference_max_side: int = 1024
+    max_reference_upload_bytes: int = 10 * 1024**2
 
     # --- Worker / frame extraction ---
     poll_interval_sec: float = 5.0
@@ -33,6 +38,10 @@ class Settings(BaseSettings):
     dup_hash_distance: int = 4
     max_video_duration_sec: int = 3600
     max_prev_frames: int = 3
+    compare_max_pairs: int = 4  # comparable frame pairs sent when comparing against an earlier day
+    compare_max_hash_distance: int = (
+        22  # dHash Hamming distance (of 64) still treated as a similar view
+    )
 
     # --- AI (Qwen3-VL via OpenAI-compatible endpoint). Nothing is assumed: all must be configured. ---
     qwen_vl_base_url: str = ""
@@ -40,7 +49,7 @@ class Settings(BaseSettings):
     qwen_vl_model: str = ""
     qwen_vl_timeout_sec: float = 180.0
     qwen_vl_json_mode: bool = True
-    prompt_version: str = "v1"
+    prompt_version: str = "v2"
 
     @property
     def public_supabase_url(self) -> str:

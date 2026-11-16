@@ -25,3 +25,8 @@
 ## Tables
 `profiles, projects, project_members, work_packages, drone_videos, video_processing_jobs, video_frames, ai_analyses, ai_observations, progress_reports`
 (see `supabase/migrations/`). Composite foreign keys `(id, project_id)` guarantee a video/analysis/package can never be linked across projects.
+
+## Comparison with earlier days and finished-site references
+- **Different-day comparison:** analysing a video compares it with an earlier analyzed video of the same project: the admin's choice (`compare_to_video_id` on `POST /videos/{id}/analyze`), else the latest earlier capture. Current frames are paired with earlier frames of a *similar view* (dHash distance <= `COMPARE_MAX_HASH_DISTANCE`, at most `COMPARE_MAX_PAIRS`); if none look alike the model is told not to claim change. The model returns a per-package `comparison` (comparable / changed / evidence frames), validated in `pipeline/ai.py`; evidence timestamps come from our frame rows.
+- **Finished-site reference:** admins upload up to 6 renders/elevations per project (`reference_images`, private `reference-images` bucket, admin-only RLS, re-encoded JPEG). They are sent as `TARGET-n` images so the model can judge how much of the finished scope is visible. Each assessment carries a `basis` (`visible_work`, `target_comparison`, `both`); `target_comparison` is reset to `visible_work` when no reference exists.
+- Nothing changes the core rules: these are suggestions, admins approve each value, progress is still computed from approved values only, unknown stays "retain". Prompt version is now `v2`.

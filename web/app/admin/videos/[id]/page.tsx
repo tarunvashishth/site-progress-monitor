@@ -2,6 +2,7 @@
 import { useRouter } from "next/navigation";
 import { use, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ComparisonPanel, CompareControl } from "@/components/comparison-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ObservationCard } from "@/components/observation-card";
 import { ErrorState, Loading } from "@/components/states";
@@ -11,13 +12,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { useAsync } from "@/lib/use-async";
 import { fmtDate } from "@/lib/validation";
-import type { AnalysisView } from "@/lib/types";
+import type { AnalysisView, ProjectDetail } from "@/lib/types";
 
 export default function VideoReview({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const view = useAsync(() => api<AnalysisView>(`/videos/${id}/analysis`), [id]);
   const playback = useAsync(() => api<{ url: string }>(`/videos/${id}/playback-url`), [id]);
+  const projectId = view.data?.video.project_id;
+  const project = useAsync(() => (projectId ? api<ProjectDetail>(`/projects/${projectId}`) : Promise.resolve(null)), [projectId]);
+  const names = Object.fromEntries((project.data?.work_packages ?? []).map((w) => [w.work_package_id, w.name]));
   const video = useRef<HTMLVideoElement>(null);
   const [confirm, setConfirm] = useState(false);
   const status = view.data?.video.status;
@@ -74,6 +78,9 @@ export default function VideoReview({ params }: { params: Promise<{ id: string }
           <Button variant="outline" onClick={() => setConfirm(true)}>Re-run AI analysis</Button>)}
       </div>
 
+      {(status === "analyzed" || status === "failed") && d.frames.length > 0 && d.video.report_status !== "published" && (
+        <CompareControl projectId={d.video.project_id} videoId={id} captureDate={d.video.capture_date} onQueued={view.reload} />)}
+
       {d.analysis && (
         <Card><CardHeader><CardTitle>AI analysis <StatusBadge status={d.analysis.status} /></CardTitle></CardHeader><CardContent className="space-y-2 text-sm">
           <p className="text-muted-foreground">Model {d.analysis.model_name} · prompt {d.analysis.prompt_version}. AI output is a suggestion; nothing is visible to clients until you approve and publish.</p>
@@ -83,6 +90,8 @@ export default function VideoReview({ params }: { params: Promise<{ id: string }
             <details><summary className="cursor-pointer text-amber-800">{d.analysis.structured_response.validation_warnings.length} validation note(s)</summary>
               <ul className="list-disc pl-5">{d.analysis.structured_response.validation_warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>)}
         </CardContent></Card>)}
+
+      <ComparisonPanel view={d} names={names} />
 
       {d.observations.length > 0 && (
         <section className="space-y-3">

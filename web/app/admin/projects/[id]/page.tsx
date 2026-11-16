@@ -4,6 +4,7 @@ import { use, useState } from "react";
 import { toast } from "sonner";
 import { PackageEditor, packageErrors, type PackageRow } from "@/components/package-editor";
 import { PackageProgressList } from "@/components/package-progress";
+import { ReferenceImages } from "@/components/reference-images";
 import { ProgressBar } from "@/components/progress-bar";
 import { Empty, ErrorState, Loading } from "@/components/states";
 import { StatusBadge } from "@/components/status-badge";
@@ -67,6 +68,10 @@ export default function AdminProject({ params }: { params: Promise<{ id: string 
           <Button variant="outline" size="sm" onClick={() => setEditing(p.work_packages.map((w) => ({ id: w.work_package_id, name: w.name,
             weight_percentage: String(Number(w.weight_percentage)), initial_approved_percentage: String(w.approved_percentage) })))}>Edit work packages</Button>
         </>)}
+      </CardContent></Card>
+
+      <Card><CardHeader><CardTitle>Finished-site reference images</CardTitle></CardHeader><CardContent>
+        <ReferenceImages projectId={id} packages={p.work_packages} />
       </CardContent></Card>
 
       <Card><CardHeader><CardTitle>Upload drone video</CardTitle></CardHeader><CardContent>

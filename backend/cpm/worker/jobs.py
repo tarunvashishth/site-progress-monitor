@@ -9,6 +9,7 @@ from cpm.core.config import Settings
 from cpm.core.db import Jsonb, all_, one, service_tx
 from cpm.core.storage import Storage, StorageError
 from cpm.pipeline import ai, frames
+from cpm.pipeline.compare import pair_frames
 from cpm.pipeline.errors import PermanentError, TransientError
 
 log = logging.getLogger("cpm.worker")
@@ -104,6 +105,37 @@ def _upsert_analysis(c, job, video, s, status, fp, error=None, raw=None) -> str:
     )["id"]
 
 
+def _compare_context(c, video: dict, job: dict, rows: list[dict], s: Settings) -> dict | None:
+    """The earlier capture to compare against: the admin's choice, else the latest earlier analyzed
+    video of the same project. Frames are paired by visual similarity so unlike views are never compared."""
+    cid = job.get("compare_to_video_id")
+    if cid:
+        prev = one(
+            c,
+            "select id, capture_date from public.drone_videos where id=%s and project_id=%s and id<>%s",
+            (cid, video["project_id"], video["id"]),
+        )
+    else:
+        prev = one(
+            c,
+            "select v.id, v.capture_date from public.drone_videos v where v.project_id=%s and v.id<>%s "
+            "and v.capture_date < %s and v.status='analyzed' "
+            "and exists (select 1 from public.video_frames f where f.video_id=v.id) "
+            "order by v.capture_date desc, v.created_at desc limit 1",
+            (video["project_id"], video["id"], video["capture_date"]),
+        )
+    if not prev:
+        return None
+    earlier = all_(
+        c,
+        "select id, frame_index, timestamp_seconds, storage_path, image_hash "
+        "from public.video_frames where video_id=%s order by frame_index",
+        (prev["id"],),
+    )
+    pairs = pair_frames(rows, earlier, s.compare_max_pairs, s.compare_max_hash_distance)
+    return {"video_id": prev["id"], "capture_date": prev["capture_date"], "pairs": pairs}
+
+
 def analyze(
     job: dict, video: dict, storage: Storage, s: Settings, provider: ai.VisionProvider | None
 ) -> None:
@@ -163,6 +195,41 @@ def analyze(
                         )
                     )
                 ]
+        compare = _compare_context(c, video, job, rows, s)
+        target_rows = all_(
+            c,
+            "select id, storage_path, caption, work_package_id from public.reference_images "
+            "where project_id=%s order by created_at",
+            (video["project_id"],),
+        )
+    compare_note = None
+    if compare:
+        d = compare["capture_date"]
+        if compare["pairs"]:
+            prev_paths = [
+                (
+                    f"PREVIOUS-{n + 1} (captured {d}, same view as Frame {p['current_index']})",
+                    p["earlier"]["storage_path"],
+                )
+                for n, p in enumerate(compare["pairs"])
+            ]
+            compare_note = (
+                f"Earlier capture for comparison: {d}. PREVIOUS images are paired with the current frame "
+                "of a similar view."
+            )
+        else:
+            prev_paths = []
+            compare_note = (
+                f"An earlier capture from {d} exists but no frames show a comparable view. "
+                "Do not claim any change against it."
+            )
+    extra = {}
+    if compare:
+        extra["cmp"] = [str(compare["video_id"])] + [
+            f"{p['current_index']}:{p['earlier']['id']}" for p in compare["pairs"]
+        ]
+    if target_rows:
+        extra["targets"] = [str(t["id"]) for t in target_rows]
     current = {
         k: float(v)
         for k, v in progress.current_values(
@@ -170,7 +237,7 @@ def analyze(
         ).items()
     }
     fp = ai.fingerprint(
-        s, [r["image_hash"] for r in rows], pkgs, current, [p for _, p in prev_paths]
+        s, [r["image_hash"] for r in rows], pkgs, current, [p for _, p in prev_paths], extra
     )
     if not job.get("force_reanalysis"):
         with service_tx() as c:
@@ -197,6 +264,14 @@ def analyze(
             for r in rows
         ]
         prev_imgs = [(label, storage.read(s.frames_bucket, p)) for label, p in prev_paths]
+        targets = [
+            (
+                f"TARGET-{n + 1}",
+                storage.read(s.reference_bucket, t["storage_path"]),
+                t["caption"] or "no caption",
+            )
+            for n, t in enumerate(target_rows)
+        ]
     except StorageError as e:
         raise TransientError(str(e)) from None
     messages = ai.build_messages(
@@ -206,6 +281,8 @@ def analyze(
         imgs,
         {"date": last["capture_date"], "summary": last["summary"]} if last else None,
         prev_imgs,
+        targets,
+        compare_note,
     )
     with service_tx() as c:
         analysis_id = _upsert_analysis(c, job, video, s, "running", fp)
@@ -222,13 +299,32 @@ def analyze(
             )
         raise
     structured, _ = ai.resolve(
-        out, {r["frame_index"]: r for r in rows}, {str(p["id"]) for p in pkgs}
+        out,
+        {r["frame_index"]: r for r in rows},
+        {str(p["id"]) for p in pkgs},
+        has_targets=bool(targets),
+        has_comparison=bool(compare and compare["pairs"]),
     )
+    if compare:
+        structured["compared_with"] = {
+            "video_id": str(compare["video_id"]),
+            "capture_date": str(compare["capture_date"]),
+            "pairs": [
+                {
+                    "current_frame_index": p["current_index"],
+                    "previous_frame_id": str(p["earlier"]["id"]),
+                    "previous_frame_index": p["earlier"]["frame_index"],
+                    "distance": p["distance"],
+                }
+                for p in compare["pairs"]
+            ],
+        }
+    structured["reference_image_ids"] = [str(t["id"]) for t in target_rows]
     with service_tx() as c:  # one transaction: retries can never duplicate observations
         c.execute(
             "update public.ai_analyses set status='completed', raw_response=%s, structured_response=%s, "
-            "error_message=null, completed_at=now() where id=%s",
-            (raw, Jsonb(structured), analysis_id),
+            "error_message=null, completed_at=now(), compare_to_video_id=%s where id=%s",
+            (raw, Jsonb(structured), compare["video_id"] if compare else None, analysis_id),
         )
         c.execute("delete from public.ai_observations where analysis_id=%s", (analysis_id,))
         for o in structured["observations"]:

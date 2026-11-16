@@ -170,7 +170,7 @@ def test_happy_path_extracts_frames_and_stores_analysis(world, video_file, monke
         "structured_response->'validation_warnings' from public.ai_analyses where video_id=%s",
         (v,),
     ).fetchone()
-    assert a[:4] == ("completed", "served-model", "v1", True)
+    assert a[:4] == ("completed", "served-model", get_settings().prompt_version, True)
     o = world.c.execute(
         "select review_status, jsonb_array_length(evidence_frames), ai_original->>'title' "
         "from public.ai_observations where project_id=%s and title='Foundation' "

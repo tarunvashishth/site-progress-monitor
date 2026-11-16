@@ -37,6 +37,9 @@ class UploadIn(BaseModel):
 
 class AnalyzeIn(BaseModel):
     force: bool = False
+    compare_to_video_id: UUID | None = (
+        None  # earlier capture of the same project; default = latest earlier
+    )
 
 
 def _video(c, vid):
@@ -46,14 +49,16 @@ def _video(c, vid):
     return v
 
 
-def enqueue(c, video_id, job_type: str, user_id: str, force: bool = False) -> dict:
+def enqueue(
+    c, video_id, job_type: str, user_id: str, force: bool = False, compare_to: UUID | None = None
+) -> dict:
     try:
         with c.transaction():
             job = one(
                 c,
-                "insert into public.video_processing_jobs (video_id, job_type, created_by, force_reanalysis)"
-                " values (%s,%s,%s,%s) returning *",
-                (video_id, job_type, user_id, force),
+                "insert into public.video_processing_jobs (video_id, job_type, created_by, force_reanalysis,"
+                " compare_to_video_id) values (%s,%s,%s,%s,%s) returning *",
+                (video_id, job_type, user_id, force, compare_to),
             )
     except pg.UniqueViolation:
         raise ApiError(
@@ -236,7 +241,21 @@ def analyze(video_id: UUID, admin: Admin, body: AnalyzeIn | None = None):
             (video_id,),
         ):
             raise ApiError(409, "published", "This video already has a published report")
-        return enqueue(c, video_id, "analyze", admin.id, bool(body and body.force))
+        compare_to = body.compare_to_video_id if body else None
+        if compare_to:
+            earlier = one(
+                c,
+                "select 1 from public.drone_videos e where e.id=%s and e.project_id=%s "
+                "and e.capture_date < %s and e.status='analyzed'",
+                (compare_to, v["project_id"], v["capture_date"]),
+            )
+            if not earlier:
+                raise ApiError(
+                    422,
+                    "bad_comparison",
+                    "Compare against an analyzed video of the same project captured on an earlier date",
+                )
+        return enqueue(c, video_id, "analyze", admin.id, bool(body and body.force), compare_to)
 
 
 @router.get("/videos/{video_id}/analysis")
@@ -260,6 +279,29 @@ def analysis(video_id: UUID, admin: Admin, storage: Store, raw: bool = False):
             "where video_id=%s order by frame_index",
             (video_id,),
         )
+        compared = None
+        if a and a.get("compare_to_video_id"):
+            compared = one(
+                c,
+                "select id, capture_date, original_filename from public.drone_videos where id=%s",
+                (a["compare_to_video_id"],),
+            )
+            pairs = ((a.get("structured_response") or {}).get("compared_with") or {}).get(
+                "pairs", []
+            )
+            ids = [p["previous_frame_id"] for p in pairs]
+            prev_frames = (
+                all_(
+                    c,
+                    "select id, frame_index, thumbnail_path from public.video_frames "
+                    "where id = any(%s::uuid[])",
+                    (ids,),
+                )
+                if ids
+                else []
+            )
+        else:
+            prev_frames = []
         obs = (
             all_(
                 c,
@@ -280,9 +322,18 @@ def analysis(video_id: UUID, admin: Admin, storage: Store, raw: bool = False):
             else None
         )
         f.pop("thumbnail_path")
+    for f in prev_frames:
+        f["thumb_url"] = (
+            storage.signed_url(s.frames_bucket, f["thumbnail_path"])
+            if f["thumbnail_path"]
+            else None
+        )
+        f.pop("thumbnail_path")
     return {
         "video": v,
         "job": job,
+        "compared_video": compared,
+        "compared_frames": prev_frames,
         "analysis": a,
         "observations": obs,
         "frames": frames,

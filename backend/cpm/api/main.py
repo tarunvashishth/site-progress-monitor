@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from cpm.api.routers import projects, reports, videos
+from cpm.api.routers import projects, references, reports, videos
 from cpm.core import errors
 from cpm.core.config import get_settings
 
@@ -15,6 +15,7 @@ app.add_middleware(
 )
 app.include_router(projects.router)
 app.include_router(videos.router)
+app.include_router(references.router)
 app.include_router(reports.router)
 
 

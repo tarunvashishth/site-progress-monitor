@@ -32,11 +32,26 @@ export interface Observation {
   confidence?: number; review_status?: "pending" | "approved" | "rejected"; work_package_id?: string | null;
   work_package_name?: string | null; evidence: Evidence[]; evidence_frames?: Evidence[]; edited_by?: string | null;
 }
+export type Basis = "visible_work" | "target_comparison" | "both";
+export interface ComparisonEntry {
+  work_package_id: string; comparable: boolean; changed: "yes" | "no" | "unclear"; description: string; evidence: Evidence[];
+}
+export interface ComparedWith {
+  video_id: string; capture_date: string;
+  pairs: { current_frame_index: number; previous_frame_id: string; previous_frame_index: number; distance: number }[];
+}
+export interface ReferenceImage {
+  id: string; work_package_id: string | null; work_package_name: string | null; caption: string | null;
+  original_filename: string; url: string; created_at: string;
+}
 export interface AnalysisView {
   video: VideoRow & { project_id: string };
   job: { status: string; error_message: string | null; job_type: string } | null;
+  compared_video?: { id: string; capture_date: string; original_filename: string } | null;
+  compared_frames?: { id: string; frame_index: number; thumb_url: string | null }[];
   analysis: { id: string; status: string; model_name: string; prompt_version: string; error_message: string | null;
-              structured_response: { summary?: string; validation_warnings?: string[] } | null } | null;
+              structured_response: { summary?: string; validation_warnings?: string[]; comparison?: ComparisonEntry[];
+                compared_with?: ComparedWith; reference_image_ids?: string[] } | null } | null;
   observations: (Observation & { evidence_frames: Evidence[] })[];
   frames: { id: string; frame_index: number; timestamp_seconds: number; thumb_url: string | null }[];
   ai_configured: boolean;
@@ -44,7 +59,7 @@ export interface AnalysisView {
 export interface ReportItem {
   work_package_id: string; name: string; weight_percentage: number; previous_approved_percentage: number;
   approved_percentage: number | null; assessed: boolean; decision?: "pending" | "accept" | "edit" | "retain";
-  ai?: { assessable: boolean; proposed_completion_percentage: number | null; confidence: number; reasoning: string } | null;
+  ai?: { assessable: boolean; proposed_completion_percentage: number | null; confidence: number; reasoning: string; basis?: Basis } | null;
 }
 export interface Report {
   id: string; project_id: string; video_id: string; status: "draft" | "published"; summary: string;

@@ -18,3 +18,15 @@ export const fmtPct = (n: number | null | undefined) => (n == null ? "—" : `${
 export const fmtTime = (s: number) => new Date(s * 1000).toISOString().slice(11, 19);
 export const fmtDate = (d: string | null | undefined) =>
   d ? new Date(d).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+
+export const MAX_REFERENCE_BYTES = 10 * 1024 * 1024;
+export const MAX_REFERENCES = 6;
+export function validateReferenceFile(file: { size: number; type: string }): string | null {
+  if (file.type !== "image/jpeg" && file.type !== "image/png") return "Reference images must be JPEG or PNG.";
+  if (file.size <= 0) return "The file is empty.";
+  if (file.size > MAX_REFERENCE_BYTES) return "The image exceeds the 10 MB limit.";
+  return null;
+}
+export const BASIS_LABEL: Record<string, string> = {
+  visible_work: "visible work", target_comparison: "comparison with the finished-site reference", both: "visible work and the finished-site reference",
+};

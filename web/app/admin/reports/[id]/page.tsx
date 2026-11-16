@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useAsync } from "@/lib/use-async";
-import { fmtPct } from "@/lib/validation";
+import { BASIS_LABEL, fmtPct } from "@/lib/validation";
 import type { Report, ReportItem } from "@/lib/types";
 
 type Choice = { decision: "pending" | "accept" | "edit" | "retain"; value: string };
@@ -69,7 +69,7 @@ export function DraftEditor({ id, r, reload }: { id: string; r: Report; reload: 
             <fieldset key={w.work_package_id} className="space-y-2 border-b pb-4 last:border-0">
               <legend className="font-medium">{w.name} <span className="text-sm font-normal text-muted-foreground">weight {w.weight_percentage}% · earlier approved {fmtPct(w.previous_approved_percentage)}</span></legend>
               {ai && ai.assessable
-                ? <p className="text-sm">AI suggests <b>{fmtPct(ai.proposed_completion_percentage)}</b> (confidence {Math.round(ai.confidence * 100)}%): {ai.reasoning}</p>
+                ? <p className="text-sm">AI suggests <b>{fmtPct(ai.proposed_completion_percentage)}</b> (confidence {Math.round(ai.confidence * 100)}%{ai.basis ? ` · based on ${BASIS_LABEL[ai.basis] ?? ai.basis}` : ""}): {ai.reasoning}</p>
                 : <p className="text-sm text-muted-foreground">Not assessable from the footage{ai?.reasoning ? `: ${ai.reasoning}` : ""}. Unknown is not treated as 0%.</p>}
               <div className="flex flex-wrap items-center gap-4 text-sm">
                 {ai?.assessable && <label className="flex items-center gap-1.5"><input type="radio" name={w.work_package_id} checked={c.decision === "accept"} onChange={() => setChoice(w.work_package_id, { decision: "accept" })} />Accept AI value</label>}

@@ -35,3 +35,6 @@ ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_compare_reference.py" = ["F811"]  # reuses test_worker fixtures

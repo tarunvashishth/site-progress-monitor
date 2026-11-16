@@ -66,6 +66,7 @@ class AssessmentOut(BaseModel):
     proposed_completion_percentage: float | None = Field(default=None, ge=0, le=100)
     confidence: float = Field(default=0, ge=0, le=1)
     reasoning: str = ""
+    basis: Literal["visible_work", "target_comparison", "both"] = "visible_work"
 
     @model_validator(mode="after")
     def _consistent(self):
@@ -76,10 +77,21 @@ class AssessmentOut(BaseModel):
         return self
 
 
+class ComparisonOut(BaseModel):
+    """What changed for one work package between an earlier capture and the current video."""
+
+    work_package_id: str
+    comparable: bool
+    changed: Literal["yes", "no", "unclear"] = "unclear"
+    description: str = Field(default="", max_length=3000)
+    current_frame_indices: list[int] = []
+
+
 class AnalysisOut(BaseModel):
     summary: str = Field(min_length=1, max_length=5000)
     observations: list[ObservationOut] = []
     package_assessments: list[AssessmentOut] = []
+    comparison: list[ComparisonOut] = []
 
 
 def parse_output(raw: str) -> AnalysisOut:
@@ -92,7 +104,11 @@ def parse_output(raw: str) -> AnalysisOut:
 
 
 def resolve(
-    out: AnalysisOut, frames: dict[int, dict], package_ids: set[str]
+    out: AnalysisOut,
+    frames: dict[int, dict],
+    package_ids: set[str],
+    has_targets: bool = False,
+    has_comparison: bool = False,
 ) -> tuple[dict, list[str]]:
     """Check references against real records. Evidence timestamps come from our frame records,
     never from the model. Returns (structured_response, warnings)."""
@@ -135,11 +151,48 @@ def resolve(
             warnings.append(f"duplicate assessment for {a.work_package_id} ignored")
         else:
             seen.add(a.work_package_id)
-            assessments.append(a.model_dump())
+            d = a.model_dump()
+            if d["basis"] != "visible_work" and not has_targets:
+                d["basis"] = "visible_work"  # cannot cite a reference that was not provided
+                warnings.append(
+                    f"assessment {a.work_package_id}: basis reset (no reference images)"
+                )
+            assessments.append(d)
+    comparison = []
+    if out.comparison and not has_comparison:
+        warnings.append("comparison output discarded (no earlier capture was provided)")
+    for k in out.comparison if has_comparison else []:
+        if k.work_package_id not in package_ids:
+            warnings.append(f"comparison for unknown work package {k.work_package_id} discarded")
+            continue
+        idx = [i for i in dict.fromkeys(k.current_frame_indices) if i in frames]
+        changed = k.changed if k.comparable else "unclear"  # unreliable views never claim change
+        if changed == "yes" and not idx:
+            changed = "unclear"
+            warnings.append(
+                f"comparison {k.work_package_id}: change claimed without evidence frames"
+            )
+        comparison.append(
+            {
+                "work_package_id": k.work_package_id,
+                "comparable": k.comparable,
+                "changed": changed,
+                "description": k.description.strip(),
+                "evidence": [
+                    {
+                        "frame_id": str(frames[i]["id"]),
+                        "frame_index": i,
+                        "timestamp_seconds": float(frames[i]["timestamp_seconds"]),
+                    }
+                    for i in idx
+                ],
+            }
+        )
     return {
         "summary": out.summary.strip(),
         "observations": observations,
         "package_assessments": assessments,
+        "comparison": comparison,
         "validation_warnings": warnings,
     }, warnings
 
@@ -155,11 +208,16 @@ SYSTEM = """You are a construction site progress analyst reviewing drone imagery
 - category is one of: foundation, concrete, structural, masonry, roofing, exterior, site, issue, other.
 - For each work package give an assessment. If the footage cannot support an estimate set assessable=false and proposed_completion_percentage=null. NEVER output 0 to mean "unknown".
 - Estimates are suggestions reviewed by a human; explain visible evidence and limitations in reasoning.
+- "TARGET-n" images show the DESIGN of the finished site (renders or drawings), not the site today. Use them only to judge how much of the finished scope is already visible in the CURRENT frames. Never treat a TARGET image as evidence that work exists; if the CURRENT views cannot be matched to a target view, set assessable=false.
+- Earlier-capture images are paired with a current frame when the views look alike ("PREVIOUS-n ... same view as Frame k"). For each work package you can compare, add a "comparison" entry: comparable=false if angle, distance or visibility differ, else changed = yes/no/unclear with what you see. Never infer change from lighting, shadows, weather or camera differences.
+- basis says what an estimate rests on: visible_work, target_comparison (needs TARGET images) or both.
 Respond with ONE JSON object only, no markdown:
 {"summary": str, "observations": [{"title": str, "description": str, "category": str, "observation_type": str,
  "work_package_id": str|null, "confidence": 0-1, "evidence_frame_indices": [int], "evidence_timestamps_seconds": [number]}],
  "package_assessments": [{"work_package_id": str, "assessable": bool, "proposed_completion_percentage": 0-100|null,
- "confidence": 0-1, "reasoning": str}]}"""
+ "confidence": 0-1, "reasoning": str, "basis": "visible_work"|"target_comparison"|"both"}],
+ "comparison": [{"work_package_id": str, "comparable": bool, "changed": "yes"|"no"|"unclear", "description": str,
+ "current_frame_indices": [int]}]}"""
 
 
 def _ts(sec: float) -> str:
@@ -181,6 +239,8 @@ def build_messages(
     frames: list[dict],
     prev: dict | None,
     prev_images: list[tuple[str, bytes]],
+    targets: list[tuple[str, bytes, str]] | None = None,
+    compare_note: str | None = None,
 ) -> list[dict]:
     pk = "\n".join(
         f"- id={p['id']} | {p['name']} | weight {p['weight_percentage']}% | "
@@ -193,12 +253,23 @@ def build_messages(
     )
     if prev:
         head += f"Previous published report ({prev['date']}): {prev['summary']}\n"
-    content: list[dict] = [{"type": "text", "text": head + "\nCURRENT frames follow."}]
+    if compare_note:
+        head += compare_note + "\n"
+    content: list[dict] = [{"type": "text", "text": head}]
+    for label, jpeg, caption in targets or []:
+        content += [
+            {
+                "type": "text",
+                "text": f"{label} (design of the FINISHED site, not today): {caption}",
+            },
+            _img(jpeg),
+        ]
     for label, jpeg in prev_images:
         content += [
             {"type": "text", "text": f"{label} (earlier capture, reference only):"},
             _img(jpeg),
         ]
+    content.append({"type": "text", "text": "CURRENT frames follow."})
     for f in frames:
         content += [
             {"type": "text", "text": f"Frame {f['frame_index']} at {_ts(f['timestamp_seconds'])}:"},
@@ -209,7 +280,12 @@ def build_messages(
 
 
 def fingerprint(
-    s: Settings, frame_hashes: list[str], packages: list[dict], current: dict, prev_ids: list[str]
+    s: Settings,
+    frame_hashes: list[str],
+    packages: list[dict],
+    current: dict,
+    prev_ids: list[str],
+    extra: dict | None = None,
 ) -> str:
     payload = {
         "model": s.qwen_vl_model,
@@ -221,6 +297,8 @@ def fingerprint(
         ],
         "prev": sorted(prev_ids),
     }
+    if extra:
+        payload["extra"] = extra
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
