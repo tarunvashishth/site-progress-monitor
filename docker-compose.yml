@@ -1,0 +1,17 @@
+# API + worker against your Supabase project (cloud, or `supabase start` on a machine with Docker).
+# The frontend is deployed separately (Vercel) or run with `npm run dev` in web/.
+services:
+  api:
+    build: ./backend
+    env_file: ./backend/.env
+    ports: ["8000:8000"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+  worker:
+    build: ./backend
+    env_file: ./backend/.env
+    command: ["python", "-m", "cpm.worker.main"]
+    restart: unless-stopped
+    # Single persistent worker is enough for the MVP. Add `deploy.replicas` later: job claiming uses SKIP LOCKED.
